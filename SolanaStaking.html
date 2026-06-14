@@ -44,21 +44,27 @@
             <h1 class="text-3xl font-bold text-white">Solana Staking Rewards Reporter</h1>
             <p class="text-gray-400 mt-2">Generate a Koinly-compatible CSV of your staking rewards.</p>
             <div class="mt-4 p-3 bg-blue-900/30 rounded-md text-sm text-blue-200 text-left">
-                <p><strong>💡 Tips:</strong> This app uses only Alchemy's Solana API for maximum reliability and stores your data locally. <BR>
-                                            With an API key, you get higher rate limits. Without one, the demo endpoint is used with lower limits. <BR>
+                <p><strong>💡 Tips:</strong> Add both Alchemy and Helius API keys for best reliability. The app also tries free public RPCs automatically. <BR>
+                                            "Failed to fetch" usually means browser CORS blocks — keyed endpoints (Alchemy/Helius) work best. <BR>
                                             Re-running the same range will retry any previously failed epochs, do this until all epoch gaps filled. <BR>
                                             If running Full History, it processes from newest to oldest epochs and can be stopped anytime. <BR>
                                             The most recent 2 epochs are automatically excluded as their data is usually not available yet. <BR>
-                                            Use smaller time ranges for quick updates after completing a full history scan.</p>
+                                            Use smaller time ranges for quick updates after completing a full history scan. <BR>
+                                            Default is Full History — select "Last 90 epochs" only if you want the past ~6 months.</p>
             </div>
         </div>
 
         <!-- Input Section -->
         <div class="space-y-4">
             <div>
-                <label for="apiKey" class="block text-sm font-medium text-gray-300 mb-1">Alchemy API Key (Recommended)</label>
-                <input type="text" id="apiKey" class="w-full bg-gray-700 border border-gray-600 text-white rounded-md px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 placeholder-gray-500" placeholder="Enter your Alchemy API key for better reliability">
-                <p class="text-xs text-gray-400 mt-1">Get your free API key at <a href="https://alchemy.com" target="_blank" class="text-blue-400 hover:underline">alchemy.com</a>. Without an API key, the demo endpoint will be used, which has lower rate limits.</p>
+                <label for="apiKey" class="block text-sm font-medium text-gray-300 mb-1">Alchemy API Key</label>
+                <input type="text" id="apiKey" class="w-full bg-gray-700 border border-gray-600 text-white rounded-md px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 placeholder-gray-500" placeholder="Enter your Alchemy API key">
+                <p class="text-xs text-gray-400 mt-1">Free key at <a href="https://alchemy.com" target="_blank" class="text-blue-400 hover:underline">alchemy.com</a></p>
+            </div>
+            <div>
+                <label for="heliusApiKey" class="block text-sm font-medium text-gray-300 mb-1">Helius API Key (Recommended backup)</label>
+                <input type="text" id="heliusApiKey" class="w-full bg-gray-700 border border-gray-600 text-white rounded-md px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 placeholder-gray-500" placeholder="Enter your Helius API key">
+                <p class="text-xs text-gray-400 mt-1">Free 1M credits/mo at <a href="https://helius.dev" target="_blank" class="text-blue-400 hover:underline">helius.dev</a>. Used automatically when Alchemy is rate-limited.</p>
             </div>
             <div>
                 <label for="publicKey" class="block text-sm font-medium text-gray-300 mb-1">Your Solana Public Key (Wallet Address)</label>
@@ -77,9 +83,9 @@
                     <option value="10">Last 10 epochs (~3 weeks) - Very Fast</option>
                     <option value="30">Last 30 epochs (~2 months) - Fast</option>
                     <option value="50">Last 50 epochs (~3 months) - Good</option>
-                    <option value="90" selected>Last 90 epochs (~6 months)</option>
+                    <option value="90">Last 90 epochs (~6 months)</option>
                     <option value="180">Last 180 epochs (~1 year)</option>
-                    <option value="full">Full History - All epochs (can be stopped anytime)</option>
+                    <option value="full" selected>Full History - All epochs (can be stopped anytime)</option>
                 </select>
             </div>
             <div id="manual-epochs" class="hidden">
@@ -157,6 +163,7 @@
 
     <script>
         const apiKeyInput = document.getElementById('apiKey');
+        const heliusApiKeyInput = document.getElementById('heliusApiKey');
         const publicKeyInput = document.getElementById('publicKey');
         const networkSelect = document.getElementById('network');
         const timeRangeSelect = document.getElementById('timeRange');
@@ -180,36 +187,36 @@
         const dbStatusText = document.getElementById('db-status-text');
         const storageInfo = document.getElementById('storage-info');
 
-        // Configuration
-        function getMainnetRpcUrls(apiKey = null) {
+        // Build full RPC endpoint list (keyed providers first, then free browser-friendly fallbacks)
+        function buildAllRpcUrls() {
+            const alchemyKey = apiKeyInput.value.trim();
+            const heliusKey = heliusApiKeyInput.value.trim();
+            const isDevnet = networkSelect.value === 'devnet';
             const urls = [];
-            if (apiKey) {
-                urls.push(`https://solana-mainnet.g.alchemy.com/v2/${apiKey}`);
+
+            if (isDevnet) {
+                if (heliusKey) urls.push(`https://devnet.helius-rpc.com/?api-key=${heliusKey}`);
+                if (alchemyKey) urls.push(`https://solana-devnet.g.alchemy.com/v2/${alchemyKey}`);
+                urls.push('https://solana-devnet.g.alchemy.com/v2/demo');
+                urls.push('https://api.devnet.solana.com');
+                return [...new Set(urls)];
             }
-            // Alchemy demo endpoint
+
+            // Mainnet — keyed endpoints first (CORS-friendly, higher limits)
+            if (heliusKey) urls.push(`https://mainnet.helius-rpc.com/?api-key=${heliusKey}`);
+            if (alchemyKey) urls.push(`https://solana-mainnet.g.alchemy.com/v2/${alchemyKey}`);
             urls.push('https://solana-mainnet.g.alchemy.com/v2/demo');
-            return urls;
+
+            // Free public endpoints that allow browser requests
+            urls.push('https://rpc.solanatracker.io/public');
+            urls.push('https://rpc.aex402.com');
+            urls.push('https://solana.publicnode.com');
+            urls.push('https://api.mainnet-beta.solana.com');
+
+            return [...new Set(urls)];
         }
         
-        function getDevnetRpcUrls(apiKey = null) {
-            const urls = [];
-            if (apiKey) {
-                urls.push(`https://solana-devnet.g.alchemy.com/v2/${apiKey}`);
-            }
-            // Alchemy demo endpoint
-            urls.push('https://solana-devnet.g.alchemy.com/v2/demo');
-            return urls;
-        }
-        
-        // Emergency fallback endpoints for critical calls only
-        function getEmergencyRpcUrls() {
-            return [
-                'https://api.mainnet-beta.solana.com',
-                'https://solana.publicnode.com'
-            ];
-        }
-        
-        let currentRpcUrls = getMainnetRpcUrls();
+        let currentRpcUrls = buildAllRpcUrls();
         const STAKE_PROGRAM_ID = 'Stake11111111111111111111111111111111111111';
         const LAMPORTS_PER_SOL = 1_000_000_000;
 
@@ -222,6 +229,7 @@
         function saveConfig() {
             const config = {
                 apiKey: apiKeyInput.value.trim(),
+                heliusApiKey: heliusApiKeyInput.value.trim(),
                 walletAddress: publicKeyInput.value.trim()
             };
             localStorage.setItem('solanaStakingConfig', JSON.stringify(config));
@@ -231,7 +239,7 @@
             const config = {
                 defaultWalletAddress: publicKeyInput.value.trim(),
                 alchemyApiKey: apiKeyInput.value.trim(),
-                ankrApiKey: "",
+                heliusApiKey: heliusApiKeyInput.value.trim(),
                 note: "This file is gitignored and contains your personal configuration. Place this file in the same directory as the HTML file."
             };
             
@@ -257,6 +265,9 @@
                     if (config.apiKey) {
                         apiKeyInput.value = config.apiKey;
                     }
+                    if (config.heliusApiKey) {
+                        heliusApiKeyInput.value = config.heliusApiKey;
+                    }
                     if (config.walletAddress) {
                         publicKeyInput.value = config.walletAddress;
                     }
@@ -279,6 +290,9 @@
                     if (config.alchemyApiKey) {
                         apiKeyInput.value = config.alchemyApiKey;
                     }
+                    if (config.heliusApiKey) {
+                        heliusApiKeyInput.value = config.heliusApiKey;
+                    }
                     if (config.defaultWalletAddress) {
                         publicKeyInput.value = config.defaultWalletAddress;
                     }
@@ -298,17 +312,18 @@
 
 
         function updateRpcUrls() {
-            const apiKey = apiKeyInput.value.trim();
-            const selectedNetwork = networkSelect.value;
-            
-            if (selectedNetwork === 'devnet') {
-                currentRpcUrls = getDevnetRpcUrls(apiKey || null);
-            } else {
-                currentRpcUrls = getMainnetRpcUrls(apiKey || null);
-            }
+            currentRpcUrls = buildAllRpcUrls();
         }
 
         // --- Database Functions ---
+
+        function idbTransactionComplete(transaction) {
+            return new Promise((resolve, reject) => {
+                transaction.oncomplete = () => resolve();
+                transaction.onerror = () => reject(transaction.error);
+                transaction.onabort = () => reject(transaction.error || new Error('Transaction aborted'));
+            });
+        }
         
         async function initDatabase() {
             return new Promise((resolve, reject) => {
@@ -355,10 +370,11 @@
                 savedAt: Date.now()
             };
             
-            await store.put(rewardRecord);
+            store.put(rewardRecord);
+            await idbTransactionComplete(transaction);
         }
 
-        async function markEpochAsProcessed(walletAddress, epoch, success = true, errorType = null, retryCount = 0) {
+        async function markEpochAsProcessed(walletAddress, epoch, success = true, errorType = null, retryCount = 0, hadRewards = null) {
             const transaction = db.transaction(['processedEpochs'], 'readwrite');
             const store = transaction.objectStore('processedEpochs');
             
@@ -367,12 +383,14 @@
                 walletAddress: walletAddress,
                 epoch: epoch,
                 success: success,
-                errorType: errorType, // 'rate_limit', 'network', 'block_unavailable', 'rpc_error'
+                errorType: errorType, // 'rate_limit', 'network', 'block_unavailable', 'rpc_error', 'timestamp_unavailable'
                 retryCount: retryCount,
+                hadRewards: hadRewards, // true = rewards saved, false = no rewards this epoch, null = unknown (legacy)
                 processedAt: Date.now()
             };
             
-            await store.put(epochRecord);
+            store.put(epochRecord);
+            await idbTransactionComplete(transaction);
         }
 
         async function getProcessedEpochs(walletAddress, includeFailures = false) {
@@ -418,19 +436,18 @@
             const processedEpochs = await getProcessedEpochs(walletAddress, true); // Include failures
             const savedRewards = await getSavedRewards(walletAddress);
             
-            const processedEpochNumbers = new Set(processedEpochs.map(p => p.epoch));
             const rewardEpochNumbers = new Set(savedRewards.map(r => r.epoch));
             
             const missingEpochs = [];
             for (let epoch = maxEpoch; epoch >= minEpoch; epoch--) {
-                // An epoch is missing if:
-                // 1. It hasn't been processed successfully, OR
-                // 2. It was processed but we don't have reward data for it
-                const wasProcessedSuccessfully = processedEpochNumbers.has(epoch) && 
-                    processedEpochs.find(p => p.epoch === epoch)?.success;
+                const epochRecord = processedEpochs.find(p => p.epoch === epoch);
+                const wasProcessedSuccessfully = epochRecord?.success;
                 const hasRewardData = rewardEpochNumbers.has(epoch);
                 
-                if (!wasProcessedSuccessfully || !hasRewardData) {
+                // Missing if never processed successfully, or rewards were expected but not saved
+                if (!wasProcessedSuccessfully) {
+                    missingEpochs.push(epoch);
+                } else if (epochRecord?.hadRewards === true && !hasRewardData) {
                     missingEpochs.push(epoch);
                 }
             }
@@ -536,7 +553,11 @@
             resetUI();
             toggleLoading(true);
             isProcessingStopped = false;
-            apiKeyExhausted = false; // Reset API key status for new session
+            apiKeyExhausted = false;
+            lastWorkingRpcUrl = null;
+            epochRequestDelayMs = 2000;
+            alchemyCooldownUntil = 0;
+            alchemyCooldownLogged = false;
             
             // Add initial delay to avoid immediate rate limiting
             logStatus('⏳ Waiting 2 seconds to respect rate limits...', 'info');
@@ -699,7 +720,7 @@
         });
 
         saveConfigBtn.addEventListener('click', () => {
-            if (!apiKeyInput.value.trim() && !publicKeyInput.value.trim()) {
+            if (!apiKeyInput.value.trim() && !heliusApiKeyInput.value.trim() && !publicKeyInput.value.trim()) {
                 logStatus('⚠️ Please enter at least an API key or wallet address before saving config.', 'error');
                 resultsContainer.style.display = 'block';
                 return;
@@ -723,7 +744,8 @@
         });
 
         // Save configuration when inputs change
-        apiKeyInput.addEventListener('input', saveConfig);
+        apiKeyInput.addEventListener('input', () => { saveConfig(); updateRpcUrls(); });
+        heliusApiKeyInput.addEventListener('input', () => { saveConfig(); updateRpcUrls(); });
         publicKeyInput.addEventListener('input', async () => {
             saveConfig();
             await updateDbStatus();
@@ -752,140 +774,215 @@
             }
         }
 
-        let apiKeyExhausted = false; // Track if API key is consistently failing
-        
-        async function makeRpcRequest(method, params, requestRpcIndex = null) {
-            // Smart endpoint selection: prefer demo if API key is exhausted, but try both for network errors
-            let startIndex = requestRpcIndex;
-            if (startIndex === null) {
-                startIndex = (apiKeyExhausted && currentRpcUrls.length > 1) ? 1 : 0;
-            }
-            
-            let lastError = null;
-            
-            // Try all endpoints, starting with preferred one
-            for (let attempt = 0; attempt < currentRpcUrls.length; attempt++) {
-                const i = (startIndex + attempt) % currentRpcUrls.length;
-                
-                try {
-                    const currentUrl = currentRpcUrls[i];
-                    const endpointType = currentUrl.includes('demo') ? 'Alchemy Demo' : 'Alchemy API Key';
-                    logStatus(`Using endpoint: ${endpointType}...`, 'info');
-                    
-                    const response = await fetch(currentUrl, {
-                        method: 'POST',
-                        headers: { 
-                            'Content-Type': 'application/json',
-                            'Accept': 'application/json'
-                        },
-                        body: JSON.stringify({
-                            jsonrpc: '2.0',
-                            id: Math.floor(Math.random() * 10000),
-                            method: method,
-                            params: params,
-                        }),
-                    });
+        let apiKeyExhausted = false;
+        let lastWorkingRpcUrl = null;
+        let epochRequestDelayMs = 2000;
+        let alchemyCooldownUntil = 0;
+        let alchemyCooldownLogged = false;
 
-                    if (!response.ok) {
-                        const errorText = await response.text().catch(() => 'Unable to read error response');
-                        throw new Error(`HTTP ${response.status} ${response.statusText}: ${errorText}`);
-                    }
+        function isAlchemyUrl(url) {
+            return url.includes('alchemy.com');
+        }
 
-                    const data = await response.json();
-                    if (data.error) {
-                        const rpcErrorMessage = data.error.message + (data.error.code ? ` (code: ${data.error.code})` : '');
-                        throw new Error(`RPC Error: ${rpcErrorMessage}`);
-                    }
-                    
-                    // Success! Reset API key exhausted flag if we succeeded with API key
-                    if (i === 0) {
-                        apiKeyExhausted = false;
-                    }
-                    
-                    logStatus(`✅ Successfully connected to ${endpointType}`, 'success');
-                    return data.result;
-                    
-                } catch (networkError) {
-                    lastError = networkError;
-                    logStatus(`❌ Failed: ${networkError.message}`, 'error');
-                    
-                    // If API key (index 0) hits rate limit, mark it as exhausted
-                    if (i === 0 && networkError.message.includes('429')) {
-                        apiKeyExhausted = true;
-                        logStatus(`🔄 API key rate limited, preferring demo endpoint for subsequent requests`, 'info');
-                    }
-                    
-                    // For network errors or other issues, try the other endpoint
-                    if (attempt < currentRpcUrls.length - 1) {
-                        const nextIndex = (startIndex + attempt + 1) % currentRpcUrls.length;
-                        const nextType = currentRpcUrls[nextIndex].includes('demo') ? 'Alchemy Demo' : 'Alchemy API Key';
-                        logStatus(`⚠️ Switching to ${nextType} endpoint...`, 'info');
-                        await new Promise(resolve => setTimeout(resolve, 1000));
-                    }
-                }
+        function isAlchemyOverloadedError(message) {
+            return message.includes('-32001') ||
+                   message.includes('Unable to complete') ||
+                   message.includes('429') ||
+                   message.includes('503') ||
+                   message.includes('compute units');
+        }
+
+        function markAlchemyOverloaded() {
+            alchemyCooldownUntil = Date.now() + 5 * 60 * 1000;
+            apiKeyExhausted = true;
+            if (lastWorkingRpcUrl && isAlchemyUrl(lastWorkingRpcUrl)) {
+                lastWorkingRpcUrl = null;
             }
-            
-            // If we get here, all endpoints failed
-            if (lastError.message.includes('429')) {
-                throw new Error(`All Alchemy endpoints are rate limited. Please wait a few minutes and try again, or try a smaller time range.`);
-            } else if (lastError.message.includes('Block not available')) {
-                throw new Error(`Block data not available for this epoch. This is normal for very recent epochs.`);
-            } else {
-                throw new Error(`All Alchemy endpoints failed. Last error: ${lastError.message}`);
+            if (!alchemyCooldownLogged) {
+                alchemyCooldownLogged = true;
+                logStatus('⏸️ Alchemy overloaded — skipping Alchemy for 5 min, using Helius/public RPCs', 'info');
             }
         }
 
-        // Emergency RPC request function for critical calls when Alchemy fails
-        async function makeEmergencyRpcRequest(method, params) {
-            const emergencyUrls = getEmergencyRpcUrls();
+        function formatRpcError(error) {
+            const msg = error?.message || String(error);
+            if (msg.includes('-32001') || msg.includes('Unable to complete')) {
+                return 'Server overloaded (-32001)';
+            }
+            if (msg.includes('429') || msg.includes('compute units')) {
+                return 'Rate limited (429)';
+            }
+            if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
+                return 'Network/CORS error';
+            }
+            if (msg.includes('jsonrpc') && msg.length > 80) {
+                return 'RPC server error';
+            }
+            return msg.length > 100 ? msg.substring(0, 100) + '…' : msg;
+        }
+
+        function getEndpointName(url) {
+            if (url.includes('helius-rpc.com')) return 'Helius';
+            if (url.includes('alchemy.com')) {
+                return url.includes('demo') ? 'Alchemy Demo' : 'Alchemy API Key';
+            }
+            if (url.includes('solanatracker.io')) return 'Solana Tracker';
+            if (url.includes('aex402.com')) return 'AeX402';
+            if (url.includes('mainnet-beta') || url.includes('devnet.solana.com')) return 'Solana Official';
+            if (url.includes('publicnode')) return 'PublicNode';
+            return 'RPC';
+        }
+
+        function isTransientRpcError(message) {
+            return isAlchemyOverloadedError(message) ||
+                   message.includes('Failed to fetch') ||
+                   message.includes('NetworkError');
+        }
+
+        function parseRpcErrorBody(errorText) {
+            try {
+                const parsed = JSON.parse(errorText);
+                if (parsed.error?.code === -32001) {
+                    return 'RPC overload (-32001): Unable to complete request at this time';
+                }
+                if (parsed.error?.code === 429 || parsed.error?.message?.includes('compute units')) {
+                    return 'Rate limited (429): compute units exceeded';
+                }
+                if (parsed.error?.message) {
+                    return `RPC Error: ${parsed.error.message} (code: ${parsed.error.code})`;
+                }
+            } catch (_) {
+                // Not JSON — fall through
+            }
+            return null;
+        }
+
+        async function fetchRpcOnce(url, method, params) {
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                },
+                body: JSON.stringify({
+                    jsonrpc: '2.0',
+                    id: Math.floor(Math.random() * 10000),
+                    method: method,
+                    params: params,
+                }),
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text().catch(() => 'Unable to read error response');
+                const parsedError = parseRpcErrorBody(errorText);
+                if (parsedError) {
+                    throw new Error(parsedError);
+                }
+                throw new Error(`HTTP ${response.status}: server error`);
+            }
+
+            const data = await response.json();
+            if (data.error) {
+                const code = data.error.code;
+                const message = data.error.message || 'Unknown RPC error';
+                if (code === -32001) {
+                    throw new Error('RPC overload (-32001): Unable to complete request at this time');
+                }
+                if (code === 429 || message.includes('compute units')) {
+                    throw new Error('Rate limited (429): compute units exceeded');
+                }
+                throw new Error(`RPC Error: ${message} (code: ${code})`);
+            }
+
+            return data.result;
+        }
+
+        async function makeRpcRequest(method, params, options = {}) {
+            const { quiet = false } = options;
+            updateRpcUrls();
+
+            let urls = currentRpcUrls.filter(url => !isAlchemyUrl(url) || Date.now() >= alchemyCooldownUntil);
+            if (urls.length === 0) {
+                urls = currentRpcUrls;
+            }
+
+            if (lastWorkingRpcUrl && urls.includes(lastWorkingRpcUrl)) {
+                urls = [lastWorkingRpcUrl, ...urls.filter(url => url !== lastWorkingRpcUrl)];
+            }
+
             let lastError = null;
-            
-            for (let i = 0; i < emergencyUrls.length; i++) {
-                try {
-                    const currentUrl = emergencyUrls[i];
-                    const endpointName = currentUrl.includes('mainnet-beta') ? 'Solana Official' : 'PublicNode';
-                    logStatus(`🚨 Emergency fallback: ${endpointName}...`, 'info');
-                    
-                    const response = await fetch(currentUrl, {
-                        method: 'POST',
-                        headers: { 
-                            'Content-Type': 'application/json',
-                            'Accept': 'application/json'
-                        },
-                        body: JSON.stringify({
-                            jsonrpc: '2.0',
-                            id: Math.floor(Math.random() * 10000),
-                            method: method,
-                            params: params,
-                        }),
-                    });
 
-                    if (!response.ok) {
-                        const errorText = await response.text().catch(() => 'Unable to read error response');
-                        throw new Error(`HTTP ${response.status} ${response.statusText}: ${errorText}`);
-                    }
+            for (let urlIndex = 0; urlIndex < urls.length; urlIndex++) {
+                const url = urls[urlIndex];
+                const endpointName = getEndpointName(url);
+                const maxRetries = isAlchemyUrl(url) ? 1 : 2;
 
-                    const data = await response.json();
-                    if (data.error) {
-                        const rpcErrorMessage = data.error.message + (data.error.code ? ` (code: ${data.error.code})` : '');
-                        throw new Error(`RPC Error: ${rpcErrorMessage}`);
-                    }
-                    
-                    logStatus(`✅ Emergency connection successful: ${endpointName}`, 'success');
-                    return data.result;
-                    
-                } catch (networkError) {
-                    lastError = networkError;
-                    logStatus(`❌ Emergency endpoint failed: ${networkError.message}`, 'error');
-                    
-                    // Brief delay before trying next emergency endpoint
-                    if (i < emergencyUrls.length - 1) {
-                        await new Promise(resolve => setTimeout(resolve, 1000));
+                for (let retry = 0; retry <= maxRetries; retry++) {
+                    try {
+                        if (!quiet) {
+                            logStatus(`Using endpoint: ${endpointName}...`, 'info');
+                        }
+
+                        const result = await fetchRpcOnce(url, method, params);
+                        lastWorkingRpcUrl = url;
+
+                        if (isAlchemyUrl(url) && !url.includes('demo')) {
+                            apiKeyExhausted = false;
+                        }
+
+                        if (!quiet) {
+                            logStatus(`✅ Successfully connected to ${endpointName}`, 'success');
+                        }
+
+                        epochRequestDelayMs = Math.max(1500, epochRequestDelayMs - 100);
+                        return result;
+                    } catch (error) {
+                        lastError = error;
+
+                        if (isAlchemyUrl(url) && isAlchemyOverloadedError(error.message)) {
+                            markAlchemyOverloaded();
+                            if (!quiet) {
+                                logStatus(`❌ ${endpointName}: ${formatRpcError(error)}`, 'error');
+                            }
+                            break;
+                        }
+
+                        const shouldRetry = isTransientRpcError(error.message) && retry < maxRetries;
+                        if (shouldRetry) {
+                            const waitMs = 1500 * Math.pow(2, retry);
+                            epochRequestDelayMs = Math.min(epochRequestDelayMs + 500, 8000);
+                            if (!quiet) {
+                                logStatus(`⏳ ${endpointName} busy, retrying in ${waitMs / 1000}s…`, 'info');
+                            }
+                            await new Promise(resolve => setTimeout(resolve, waitMs));
+                            continue;
+                        }
+
+                        if (!quiet) {
+                            logStatus(`❌ ${endpointName}: ${formatRpcError(error)}`, 'error');
+                        }
+                        break;
                     }
                 }
+
+                if (urlIndex < urls.length - 1) {
+                    if (!quiet) {
+                        logStatus(`⚠️ Switching to ${getEndpointName(urls[urlIndex + 1])}…`, 'info');
+                    }
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                }
             }
-            
-            throw new Error(`All emergency endpoints failed. Last error: ${lastError.message}`);
+
+            if (lastError?.message.includes('Block not available')) {
+                throw new Error(`Block data not available for this epoch. This is normal for very recent epochs.`);
+            }
+
+            throw new Error(`All RPC endpoints failed: ${formatRpcError(lastError)}`);
+        }
+
+        // Backward-compatible alias used by a few call sites
+        async function makeEmergencyRpcRequest(method, params) {
+            return makeRpcRequest(method, params, { quiet: true });
         }
 
         async function getStakeAccounts(publicKey) {
@@ -904,31 +1001,12 @@
                 },
             ];
             
-            try {
-                return await makeRpcRequest('getProgramAccounts', params);
-            } catch (error) {
-                // If Alchemy completely fails, try emergency endpoints
-                if (error.message.includes('All Alchemy endpoints')) {
-                    logStatus('🚨 Trying emergency public endpoints...', 'info');
-                    return await makeEmergencyRpcRequest('getProgramAccounts', params);
-                }
-                throw error;
-            }
+            return await makeRpcRequest('getProgramAccounts', params);
         }
 
         async function getEpoch() {
-            try {
-                const result = await makeRpcRequest('getEpochInfo', []);
-                return result.epoch;
-            } catch (error) {
-                // If Alchemy completely fails, try emergency endpoints
-                if (error.message.includes('All Alchemy endpoints')) {
-                    logStatus('🚨 Trying emergency public endpoints...', 'info');
-                    const result = await makeEmergencyRpcRequest('getEpochInfo', []);
-                    return result.epoch;
-                }
-                throw error;
-            }
+            const result = await makeRpcRequest('getEpochInfo', []);
+            return result.epoch;
         }
         
         async function getRewardsForAllAccounts(stakeAccounts, currentEpoch, selectedNetwork, walletAddress) {
@@ -960,9 +1038,10 @@
                  minEpoch = Math.min(...specificEpochs);
              } else {
                  if (selectedRange === 'full') {
-                     minEpoch = 0; // Start from epoch 0 for full history
+                     // Inflation rewards on mainnet began at epoch 150
+                     minEpoch = selectedNetwork === 'devnet' ? 0 : 150;
                      isFullHistory = true;
-                     logStatus(`🔑 Full History Mode: Will process all epochs from current back to epoch 0`, 'success');
+                     logStatus(`🔑 Full History Mode: Will process all epochs from current back to epoch ${minEpoch}`, 'success');
                  } else {
                      // Add 1 to the range to account for excluding the latest 2 epochs (currentEpoch - range + 1)
                      minEpoch = Math.max(0, currentEpoch - parseInt(selectedRange) - 1);
@@ -1016,15 +1095,17 @@
                  return [];
              }
              
-             const retryCount = missingEpochs.length;
-             if (retryCount > 0) {
-                 logStatus(`🔄 Found ${retryCount} missing/failed epochs to retry: ${missingEpochs.slice(0, 10).join(', ')}${missingEpochs.length > 10 ? '...' : ''}`, 'info');
+             const retryEpochs = epochsToProcess.filter(e => processedEpochNumbers.has(e));
+             const newEpochs = epochsToProcess.length - retryEpochs.length;
+             if (retryEpochs.length > 0) {
+                 logStatus(`🔄 Retrying ${retryEpochs.length} epochs: ${retryEpochs.slice(0, 10).join(', ')}${retryEpochs.length > 10 ? '...' : ''}`, 'info');
              }
              
-             logStatus(`📊 Processing ${epochsToProcess.length} epochs (${epochsToProcess.length - retryCount} new + ${retryCount} retries)`, 'info');
+             logStatus(`📊 Processing ${epochsToProcess.length} epochs (${newEpochs} new, ${retryEpochs.length} retries). Target range: ${minEpoch} → ${maxEpochToScan}`, 'info');
 
              // Process epochs one by one to avoid overwhelming the RPC endpoint
-             let consecutiveFailures = 0;
+             let consecutiveHardFailures = 0;
+             let consecutiveRateLimits = 0;
              let totalProcessed = 0;
              
              for (const epoch of epochsToProcess) {
@@ -1032,6 +1113,12 @@
                  if (isProcessingStopped) {
                      logStatus(`🛑 Processing stopped by user at epoch ${epoch}`, 'info');
                      break;
+                 }
+
+                 if (consecutiveRateLimits >= 5) {
+                     logStatus(`⏳ Rate limits detected — pausing 30s before continuing at epoch ${epoch}...`, 'info');
+                     await new Promise(resolve => setTimeout(resolve, 30000));
+                     consecutiveRateLimits = 0;
                  }
                  
                  totalProcessed++;
@@ -1042,25 +1129,26 @@
                  
                  try {
                      const params = [stakeAccountAddresses, { epoch: epoch }];
-                     const rewards = await makeRpcRequest('getInflationReward', params);
+                     const rewards = await makeRpcRequest('getInflationReward', params, { quiet: true });
                      
-                     let epochHasRewards = false;
+                     let epochHadInflationRewards = false;
+                     let epochSavedRewards = false;
                      if (rewards) {
                          for(let i = 0; i < rewards.length; i++) {
                              const reward = rewards[i];
                              if(reward) {
-                                 // Get timestamp for this reward
+                                 epochHadInflationRewards = true;
                                  try {
-                                     const timestamp = await getBlockTime(reward.effectiveSlot);
+                                     const timestamp = await getBlockTime(reward.effectiveSlot, epoch);
                                      const rewardWithTimestamp = { ...reward, epoch: epoch, stakeAccount: stakeAccountAddresses[i], timestamp: timestamp };
                                      
                                      if (timestamp) {
                                          allRewards.push(rewardWithTimestamp);
                                          await saveRewardToDb(walletAddress, rewardWithTimestamp);
-                                         epochHasRewards = true;
+                                         epochSavedRewards = true;
                                          logStatus(`💰 Found reward: ${(reward.amount / LAMPORTS_PER_SOL).toFixed(6)} SOL`, 'success');
                                      } else {
-                                         logStatus(`⚠️ Could not get timestamp for reward in epoch ${epoch}, skipping save`, 'error');
+                                         logStatus(`⚠️ Could not get timestamp for reward in epoch ${epoch}, will retry later`, 'error');
                                      }
                                  } catch (timestampError) {
                                      logStatus(`⚠️ Could not get timestamp for reward in epoch ${epoch}: ${timestampError.message}`, 'error');
@@ -1069,20 +1157,24 @@
                          }
                      }
                      
-                     // Mark epoch as processed successfully
-                     await markEpochAsProcessed(walletAddress, epoch, true);
+                     if (epochHadInflationRewards && !epochSavedRewards) {
+                         const existingRecord = await getProcessedEpochs(walletAddress, true);
+                         const existingEpoch = existingRecord.find(e => e.epoch === epoch);
+                         const currentRetryCount = existingEpoch ? existingEpoch.retryCount + 1 : 1;
+                         await markEpochAsProcessed(walletAddress, epoch, false, 'timestamp_unavailable', currentRetryCount);
+                     } else {
+                         await markEpochAsProcessed(walletAddress, epoch, true, null, 0, epochHadInflationRewards);
+                     }
                      
-                     consecutiveFailures = 0; // Reset failure counter on success
-                     // Add a longer delay between requests to be respectful to Alchemy rate limits
-                     await new Promise(resolve => setTimeout(resolve, 1000));
+                     consecutiveHardFailures = 0;
+                     consecutiveRateLimits = 0;
+                     await new Promise(resolve => setTimeout(resolve, epochRequestDelayMs));
                      
                  } catch (error) {
-                     consecutiveFailures++;
-                     logStatus(`⚠️ Failed epoch ${epoch}: ${error.message}`, 'error');
+                     logStatus(`⚠️ Failed epoch ${epoch}: ${formatRpcError(error)}`, 'error');
                      
-                     // Determine error type for smarter retry logic
                      let errorType = 'rpc_error';
-                     if (error.message.includes('429') || error.message.includes('rate limit')) {
+                     if (isAlchemyOverloadedError(error.message)) {
                          errorType = 'rate_limit';
                      } else if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
                          errorType = 'network';
@@ -1090,33 +1182,35 @@
                          errorType = 'block_unavailable';
                      }
                      
-                     // Get existing retry count for this epoch
                      const existingRecord = await getProcessedEpochs(walletAddress, true);
                      const existingEpoch = existingRecord.find(e => e.epoch === epoch);
                      const currentRetryCount = existingEpoch ? existingEpoch.retryCount + 1 : 1;
                      
-                     // Special handling for block unavailable errors on recent epochs
                      if (errorType === 'block_unavailable' && currentRetryCount >= 3) {
-                         // If we've tried 3+ times and it's still unavailable, skip this epoch
                          logStatus(`⏭️ Skipping epoch ${epoch} - block data consistently unavailable (likely too recent)`, 'info');
-                         await markEpochAsProcessed(walletAddress, epoch, true, 'skipped_unavailable', currentRetryCount);
-                         consecutiveFailures = 0; // Don't count this as a consecutive failure
+                         await markEpochAsProcessed(walletAddress, epoch, true, 'skipped_unavailable', currentRetryCount, false);
+                         consecutiveHardFailures = 0;
                          await new Promise(resolve => setTimeout(resolve, 200));
-                         continue; // Skip to next epoch
+                         continue;
                      }
                      
-                     // Mark epoch as failed with error type and retry count
                      await markEpochAsProcessed(walletAddress, epoch, false, errorType, currentRetryCount);
                      
-                     // If we have too many consecutive failures, suggest stopping
-                     if (consecutiveFailures >= 10 && totalProcessed >= 10) {
-                         logStatus(`⚠️ Too many consecutive failures. Stopping early to avoid wasting time.`, 'info');
+                     if (errorType === 'rate_limit' || errorType === 'network') {
+                         consecutiveRateLimits++;
+                         consecutiveHardFailures = 0;
+                         await new Promise(resolve => setTimeout(resolve, Math.max(epochRequestDelayMs, 5000)));
+                     } else {
+                         consecutiveHardFailures++;
+                         consecutiveRateLimits = 0;
+                         await new Promise(resolve => setTimeout(resolve, 500));
+                     }
+                     
+                     if (consecutiveHardFailures >= 15 && totalProcessed >= 15) {
+                         logStatus(`⚠️ Too many consecutive hard failures. Stopping early to avoid wasting time.`, 'info');
                          logStatus(`💡 Use "Retry Failed" button later to retry failed epochs.`, 'info');
                          break;
                      }
-                     
-                     // Continue with next epoch instead of failing completely
-                     await new Promise(resolve => setTimeout(resolve, 200));
                  }
              }
 
@@ -1131,13 +1225,26 @@
             return allRewards;
         }
 
-        async function getBlockTime(slot) {
+        function estimateEpochTimestamp(epoch) {
+            // Mainnet: epoch 0 ~ March 2020, ~2 days per epoch (432k slots × 400ms)
+            const EPOCH_ZERO_TIMESTAMP = 1584662400;
+            const SECONDS_PER_EPOCH = 172800;
+            return EPOCH_ZERO_TIMESTAMP + (epoch * SECONDS_PER_EPOCH);
+        }
+
+        async function getBlockTime(slot, epoch = null) {
             try {
-                return await makeRpcRequest('getBlockTime', [slot]);
+                const time = await makeRpcRequest('getBlockTime', [slot], { quiet: true });
+                if (time) return time;
             } catch (error) {
-                console.warn(`Failed to get block time for slot ${slot}:`, error);
-                return null;
+                console.warn(`getBlockTime failed for slot ${slot}:`, error);
             }
+
+            if (epoch !== null) {
+                return estimateEpochTimestamp(epoch);
+            }
+
+            return null;
         }
 
         async function getBlockTimes(slots) {
